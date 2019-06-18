@@ -17,11 +17,11 @@
 package io.cdap.plugin.gcp.bigquery.sink;
 
 import com.google.gson.stream.JsonWriter;
+import io.cdap.cdap.api.data.format.StructuredRecord;
 import io.cdap.cdap.api.data.schema.Schema;
 import io.cdap.plugin.gcp.bigquery.util.BigQueryUtil;
 
 import java.io.IOException;
-import java.lang.reflect.Array;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Instant;
@@ -31,6 +31,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -78,6 +79,9 @@ public final class BigQueryRecordToJson {
         break;
       case ARRAY:
         writeArray(writer, name, object, schema);
+        break;
+      case RECORD:
+        writeRecord(writer, name, object, schema);
         break;
       default:
         throw new IllegalStateException(
@@ -167,11 +171,18 @@ public final class BigQueryRecordToJson {
         String.format("Field '%s' is of value null, which is not a valid value for BigQuery type array.", name));
     }
 
-    if (!(value instanceof Collection) && !value.getClass().isArray()) {
-      throw new IllegalArgumentException("The value should be of type collection or array. Got: " + value.getClass());
+    Collection collection;
+    if (value instanceof Collection) {
+      collection = (Collection) value;
+    } else if (value instanceof Object[]) {
+      collection = Arrays.asList((Object[]) value);
+    } else {
+      throw new IllegalArgumentException(String.format(
+        "The value is of type '%s', expected Collection or array.", value.getClass().getSimpleName()));
     }
 
-    Schema componentSchema = BigQueryUtil.getNonNullableSchema(fieldSchema.getComponentSchema());
+    Schema componentSchema = BigQueryUtil.getNonNullableSchema(
+      Objects.requireNonNull(fieldSchema.getComponentSchema()));
     if (BigQueryUtil.UNSUPPORTED_ARRAY_TYPES.contains(componentSchema.getType())) {
       throw new IllegalArgumentException(String.format("Field '%s' is an array of '%s', " +
                                                          "which is not a valid BigQuery type.",
@@ -180,26 +191,47 @@ public final class BigQueryRecordToJson {
 
     writer.name(name);
     writer.beginArray();
-    if (value instanceof Collection) {
-      for (Object element : (Collection) value) {
-        // big query does not allow null values in array items
-        if (element == null) {
-          throw new IllegalArgumentException(String.format("Field '%s' contains null values in its array, " +
-                                                             "which is not allowed by BigQuery.", name));
-        }
-        write(writer, name, true, element, componentSchema);
+
+    for (Object element : collection) {
+      // BigQuery does not allow null values in array items
+      if (element == null) {
+        throw new IllegalArgumentException(String.format("Field '%s' contains null values in its array, " +
+                                                           "which is not allowed by BigQuery.", name));
       }
-    } else {
-      for (int i = 0; i < Array.getLength(value); i++) {
-        // big query does not allow null values in array items
-        if (Array.get(value, i) == null) {
-          throw new IllegalArgumentException(String.format("Field '%s' contains null values in its array, " +
-                                                             "which is not allowed by BigQuery.", name));
+      if (element instanceof StructuredRecord) {
+        writer.beginObject();
+        StructuredRecord record = (StructuredRecord) element;
+        for (Schema.Field field : Objects.requireNonNull(record.getSchema().getFields())) {
+          write(writer, field.getName(), record.get(field.getName()), field.getSchema());
         }
-        write(writer, name, true, Array.get(value, i), componentSchema);
+        writer.endObject();
+      } else {
+        write(writer, name, true, element, componentSchema);
       }
     }
     writer.endArray();
+  }
+
+  private static void writeRecord(JsonWriter writer, String name, Object value, Schema fieldSchema) throws IOException {
+    if (value == null) {
+      writer.name(name);
+      writer.nullValue();
+      return;
+    }
+
+    if (!(value instanceof  StructuredRecord)) {
+      throw new IllegalStateException(
+        String.format("Value is of type '%s', expected type is '%s'",
+                      value.getClass().getSimpleName(), StructuredRecord.class.getSimpleName()));
+    }
+
+    StructuredRecord structuredRecord = (StructuredRecord) value;
+    writer.name(name);
+    writer.beginObject();
+    for (Schema.Field field : Objects.requireNonNull(fieldSchema.getFields())) {
+      write(writer, field.getName(), structuredRecord.get(field.getName()), field.getSchema());
+    }
+    writer.endObject();
   }
 
   private static ZonedDateTime getZonedDateTime(long ts, TimeUnit unit) {
