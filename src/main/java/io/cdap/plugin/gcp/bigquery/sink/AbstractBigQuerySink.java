@@ -338,8 +338,8 @@ public abstract class AbstractBigQuerySink extends BatchSink<StructuredRecord, T
           : field.getSchema().getFields();
       }
       fieldSchema.setFields(Objects.requireNonNull(schemaFields).stream()
-              .map(this::generateTableFieldSchema)
-              .collect(Collectors.toList()));
+                              .map(this::generateTableFieldSchema)
+                              .collect(Collectors.toList()));
 
     }
     return fieldSchema;

@@ -155,6 +155,7 @@
       <artifactId>bigquery-connector</artifactId>
       <version>${bigquery.connector.hadoop2.version}</version>
       <exclusions>
+        <!-- Dependencies are excluded because they are missing in central Maven repository -->
         <exclusion>
           <groupId>com.sun.jmx</groupId>
           <artifactId>jmxri</artifactId>

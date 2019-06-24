@@ -33,8 +33,10 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import javax.annotation.Nullable;
 
 /**
  * Util class to convert structured record into json.
@@ -165,7 +167,10 @@ public final class BigQueryRecordToJson {
     }
   }
 
-  private static void writeArray(JsonWriter writer, String name, Object value, Schema fieldSchema) throws IOException {
+  private static void writeArray(JsonWriter writer,
+                                 String name,
+                                 @Nullable Object value,
+                                 Schema fieldSchema) throws IOException {
     if (value == null) {
       throw new RuntimeException(
         String.format("Field '%s' is of value null, which is not a valid value for BigQuery type array.", name));
@@ -178,7 +183,8 @@ public final class BigQueryRecordToJson {
       collection = Arrays.asList((Object[]) value);
     } else {
       throw new IllegalArgumentException(String.format(
-        "The value is of type '%s', expected Collection or array.", value.getClass().getSimpleName()));
+        "A value for the field '%s' is of type '%s' when it is expected to be a Collection or array.",
+        name, value.getClass().getSimpleName()));
     }
 
     Schema componentSchema = BigQueryUtil.getNonNullableSchema(
@@ -199,12 +205,8 @@ public final class BigQueryRecordToJson {
                                                            "which is not allowed by BigQuery.", name));
       }
       if (element instanceof StructuredRecord) {
-        writer.beginObject();
         StructuredRecord record = (StructuredRecord) element;
-        for (Schema.Field field : Objects.requireNonNull(record.getSchema().getFields())) {
-          write(writer, field.getName(), record.get(field.getName()), field.getSchema());
-        }
-        writer.endObject();
+        processRecord(writer, record, Objects.requireNonNull(record.getSchema().getFields()));
       } else {
         write(writer, name, true, element, componentSchema);
       }
@@ -212,24 +214,32 @@ public final class BigQueryRecordToJson {
     writer.endArray();
   }
 
-  private static void writeRecord(JsonWriter writer, String name, Object value, Schema fieldSchema) throws IOException {
+  private static void writeRecord(JsonWriter writer,
+                                  String name,
+                                  @Nullable Object value,
+                                  Schema fieldSchema) throws IOException {
     if (value == null) {
       writer.name(name);
       writer.nullValue();
       return;
     }
 
-    if (!(value instanceof  StructuredRecord)) {
+    if (!(value instanceof StructuredRecord)) {
       throw new IllegalStateException(
         String.format("Value is of type '%s', expected type is '%s'",
                       value.getClass().getSimpleName(), StructuredRecord.class.getSimpleName()));
     }
 
-    StructuredRecord structuredRecord = (StructuredRecord) value;
     writer.name(name);
+    processRecord(writer, (StructuredRecord) value, Objects.requireNonNull(fieldSchema.getFields()));
+  }
+
+  private static void processRecord(JsonWriter writer,
+                                    StructuredRecord record,
+                                    List<Schema.Field> fields) throws IOException {
     writer.beginObject();
-    for (Schema.Field field : Objects.requireNonNull(fieldSchema.getFields())) {
-      write(writer, field.getName(), structuredRecord.get(field.getName()), field.getSchema());
+    for (Schema.Field field : fields) {
+      write(writer, field.getName(), record.get(field.getName()), field.getSchema());
     }
     writer.endObject();
   }
